@@ -16,6 +16,7 @@ import { randomUUID } from "crypto"
 import { Mutex } from "async-mutex"
 import { CreateArgv } from "./args.js"
 import { globby } from "globby"
+import { fileInOutput, safeSitePath } from "./safePath.js"
 import {
   exitIfCancel,
   escapePath,
@@ -376,6 +377,14 @@ export async function handleBuild(argv) {
           directoryListing: false,
           headers: [
             {
+              source: "**",
+              headers: [
+                { key: "X-Content-Type-Options", value: "nosniff" },
+                { key: "X-Frame-Options", value: "SAMEORIGIN" },
+                { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+              ],
+            },
+            {
               source: "**/*.*",
               headers: [{ key: "Content-Disposition", value: "inline" }],
             },
@@ -411,15 +420,31 @@ export async function handleBuild(argv) {
         res.end()
       }
 
-      let fp = req.url?.split("?")[0] ?? "/"
+      const rawUrl = req.url ?? "/"
+      const query = rawUrl.includes("?") ? rawUrl.slice(rawUrl.indexOf("?")) : ""
+      const fp = safeSitePath(argv.output, rawUrl)
+      if (!fp) {
+        res.writeHead(400, {
+          "Content-Type": "text/plain; charset=utf-8",
+          "X-Content-Type-Options": "nosniff",
+        })
+        res.end("Bad request")
+        return
+      }
+      req.url = fp + query
+
+      const existsInOutput = (sitePath) => {
+        const file = fileInOutput(argv.output, sitePath)
+        return file !== null && fs.existsSync(file)
+      }
 
       // handle redirects
       if (fp.endsWith("/")) {
         // /trailing/
         // does /trailing/index.html exist? if so, serve it
         const indexFp = path.posix.join(fp, "index.html")
-        if (fs.existsSync(path.posix.join(argv.output, indexFp))) {
-          req.url = fp
+        if (existsInOutput(indexFp)) {
+          req.url = fp + query
           return serve()
         }
 
@@ -428,7 +453,7 @@ export async function handleBuild(argv) {
         if (path.extname(base) === "") {
           base += ".html"
         }
-        if (fs.existsSync(path.posix.join(argv.output, base))) {
+        if (existsInOutput(base)) {
           return redirect(fp.slice(0, -1))
         }
       } else {
@@ -438,14 +463,14 @@ export async function handleBuild(argv) {
         if (path.extname(base) === "") {
           base += ".html"
         }
-        if (fs.existsSync(path.posix.join(argv.output, base))) {
-          req.url = fp
+        if (existsInOutput(base)) {
+          req.url = fp + query
           return serve()
         }
 
         // does /regular/index.html exist? if so, redirect to /regular/
         let indexFp = path.posix.join(fp, "index.html")
-        if (fs.existsSync(path.posix.join(argv.output, indexFp))) {
+        if (existsInOutput(indexFp)) {
           return redirect(fp + "/")
         }
       }
@@ -454,7 +479,7 @@ export async function handleBuild(argv) {
     })
 
     server.listen(argv.port)
-    const wss = new WebSocketServer({ port: argv.wsPort })
+    const wss = new WebSocketServer({ port: argv.wsPort, maxPayload: 64 * 1024 })
     wss.on("connection", (ws) => connections.push(ws))
     console.log(
       styleText(
