@@ -39,10 +39,18 @@ const defaultOptions: Options = {
   includeEmptyFiles: true,
 }
 
+function xmlCdata(value: string): string {
+  return value.replaceAll("]]>", "]]]]><![CDATA[>")
+}
+
+function absoluteUrl(base: string, slug: SimpleSlug): string {
+  return escapeHTML(`https://${joinSegments(base, encodeURI(slug))}`)
+}
+
 function generateSiteMap(cfg: GlobalConfiguration, idx: ContentIndexMap): string {
   const base = cfg.baseUrl ?? ""
   const createURLEntry = (slug: SimpleSlug, content: ContentDetails): string => `<url>
-    <loc>https://${joinSegments(base, encodeURI(slug))}</loc>
+    <loc>${absoluteUrl(base, slug)}</loc>
     ${content.date && `<lastmod>${content.date.toISOString()}</lastmod>`}
   </url>`
   const urls = Array.from(idx)
@@ -56,10 +64,10 @@ function generateRSSFeed(cfg: GlobalConfiguration, idx: ContentIndexMap, limit?:
 
   const createURLEntry = (slug: SimpleSlug, content: ContentDetails): string => `<item>
     <title>${escapeHTML(content.title)}</title>
-    <link>https://${joinSegments(base, encodeURI(slug))}</link>
-    <guid>https://${joinSegments(base, encodeURI(slug))}</guid>
-    <description><![CDATA[ ${content.richContent ?? content.description} ]]></description>
-    <pubDate>${content.date?.toUTCString()}</pubDate>
+    <link>${absoluteUrl(base, slug)}</link>
+    <guid>${absoluteUrl(base, slug)}</guid>
+    <description><![CDATA[ ${xmlCdata(content.richContent ?? content.description ?? "")} ]]></description>
+    <pubDate>${escapeHTML(content.date?.toUTCString() ?? "")}</pubDate>
   </item>`
 
   const items = Array.from(idx)
